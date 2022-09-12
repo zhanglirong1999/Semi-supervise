@@ -13,12 +13,12 @@ sys.path.append(os.getcwd())
 from torch.utils.data import Dataset, DataLoader, RandomSampler, SequentialSampler
 
 # from models.pseudo_labeling.model import KGBERTClassifier
-from models.model import KGBERTClassifier
-from models.model_utils import evaluate
-from models.dataloader import CKBPDataset
+from model import KGBERTClassifier
+from model_utils import evaluate
+from dataloader import CKBPDataset
 from transformers import AutoTokenizer
 
-from utils.ckbp_utils import special_token_list
+# from utils.ckbp_utils import special_token_list
 
 logging.basicConfig(level=logging.INFO)
 
@@ -108,9 +108,9 @@ def main():
     save_dir = './result'
     os.makedirs(save_dir, exist_ok=True)
 
-    logger = logging.getLogger("kg-bert")
-    handler = logging.FileHandler(os.path.join(save_dir, f"log_seed_{args.seed}.txt"))
-    logger.addHandler(handler)
+    # logger = logging.getLogger("kg-bert")
+    # handler = logging.FileHandler(os.path.join(save_dir, f"log_seed_{args.seed}.txt"))
+    # logger.addHandler(handler)
 
     # set random seeds
     seed = args.seed
@@ -129,11 +129,11 @@ def main():
 
     sep_token = tokenizer.sep_token
 
-    if args.relation_as_special_token:
-        tokenizer.add_special_tokens({
-            'additional_special_tokens': special_token_list,
-        })
-        model.model.resize_token_embeddings(len(tokenizer))
+    # if args.relation_as_special_token:
+    #     tokenizer.add_special_tokens({
+    #         'additional_special_tokens': special_token_list,
+    #     })
+    #     model.model.resize_token_embeddings(len(tokenizer))
 
 
 
