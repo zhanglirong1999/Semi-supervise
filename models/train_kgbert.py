@@ -63,7 +63,7 @@ def parse_args():
                         help="batch size")
     group_trainer.add_argument("--steps", default=-1, type=int, required=False,
                         help="the number of iterations to train model on labeled data. used for the case training model less than 1 epoch")
-    group_trainer.add_argument("--max_length", default=30, type=int, required=False,
+    group_trainer.add_argument("--max_length", default=100, type=int, required=False,
                         help="max_seq_length of h+r+t")
     group_trainer.add_argument("--eval_metric", type=str, required=False, default="overall_auc",
                     choices=["grouped_auc", "overall_auc", "accuracy"],
@@ -81,7 +81,7 @@ def parse_args():
                         type=str, required=False,
                         help="where to output.")
     group_data.add_argument("--train_csv_path", default='', type=str, required=True)
-    group_data.add_argument("--evaluation_file_path", default="/data/wwangbw/AmazonKG/full_kg_v1.1/elec_true_all_v1.1.csv.csv", 
+    group_data.add_argument("--evaluation_file_path", default="/home/ubuntu/project/data/elec_true_all_v1.1.csv", 
                             type=str, required=False)
     group_data.add_argument("--model_dir", default='models', type=str, required=False,
                         help="Where to save models.") # TODO
@@ -140,8 +140,8 @@ def main():
     # load data
 
     train_dataset = pd.read_csv(args.train_csv_path)
-    infer_file = pd.read_csv(args.evaluation_file_path)
-
+    test_dataset = pd.read_csv(args.evaluation_file_path)
+    # print(train_dataset.columns)
     train_params = {
         'batch_size': int(args.batch_size*(1-args.pseudo_proportion_in_batch)),
         'shuffle': True,
@@ -158,8 +158,10 @@ def main():
     training_loader = DataLoader(training_set, **train_params, drop_last=True)
     batch_count = len(training_loader)
 
-    dev_dataset = CKBPDataset(infer_file[infer_file["split"] == "dev"], tokenizer, args.max_length, sep_token=sep_token) 
-    tst_dataset = CKBPDataset(infer_file[infer_file["split"] == "tst"], tokenizer, args.max_length, sep_token=sep_token) 
+    # dev_dataset = CKBPDataset(test_dataset, tokenizer, args.max_length, sep_token=sep_token) 
+    # tst_dataset = CKBPDataset(test_dataset, tokenizer, args.max_length, sep_token=sep_token) 
+    dev_dataset = CKBPDataset(train_dataset, tokenizer, args.max_length, sep_token=sep_token) 
+    tst_dataset = CKBPDataset(train_dataset, tokenizer, args.max_length, sep_token=sep_token) 
 
     dev_dataloader = DataLoader(dev_dataset, **val_params, drop_last=False)
     tst_dataloader = DataLoader(tst_dataset, **val_params, drop_last=False)
@@ -172,7 +174,8 @@ def main():
         'num_workers': 5
     }
 
-    pseudo_dataset = pd.read_csv(args.pseudo_examples_path)
+    # pseudo_dataset = pd.read_csv(args.pseudo_examples_path)
+    pseudo_dataset = pd.read_csv(args.train_csv_path)
     pseudo_dataset = pseudo_dataset.sample(n=pseudo_params['batch_size']*batch_count, random_state=args.seed, replace=True).reset_index(drop=True)
 
     pseudo_training_set = CKBPDataset(pseudo_dataset, tokenizer, args.max_length, sep_token=sep_token)
