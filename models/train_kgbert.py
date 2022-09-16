@@ -214,7 +214,7 @@ def main():
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-
+            print(iteration)
             if args.eval_every > 0 and iteration % args.eval_every == 0:
                 print('kkkkkkk')
                 model.eval()
