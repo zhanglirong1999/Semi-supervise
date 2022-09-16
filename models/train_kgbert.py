@@ -68,7 +68,7 @@ def parse_args():
     group_trainer.add_argument("--eval_metric", type=str, required=False, default="overall_auc",
                     choices=["grouped_auc", "overall_auc", "accuracy"],
                     help="evaluation metric.")
-    group_trainer.add_argument("--eval_every", default=250, type=int, required=False,
+    group_trainer.add_argument("--eval_every", default=5, type=int, required=False,
                         help="eval on test set every x steps.")
     group_trainer.add_argument("--relation_as_special_token", action="store_true",
                         help="whether to use special token to represent relation.")
