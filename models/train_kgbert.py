@@ -202,7 +202,7 @@ def main():
 
         for iteration, (ldata, pdata) in tqdm(enumerate(zip(training_loader, pseudo_loader), 1), total=batch_count):
             # the iteration starts from 1. 
-            print(pdata)
+            # print(pdata)
             y = torch.cat((ldata['label'], pdata['label']), dim=0).to(args.device, dtype=torch.long)
             ids = torch.cat((ldata['ids'], pdata['ids']), dim=0).to(args.device, dtype=torch.long)
             mask = torch.cat((ldata['mask'], pdata['mask']), dim=0).to(args.device, dtype=torch.long)
@@ -216,6 +216,7 @@ def main():
             optimizer.step()
 
             if args.eval_every > 0 and iteration % args.eval_every == 0:
+                print('kkkkkkk')
                 model.eval()
 
                 # validation auc
