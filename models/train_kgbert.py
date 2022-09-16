@@ -229,13 +229,13 @@ def main():
                         tokenizer.save_pretrained(save_dir + "/best_tokenizer")
                     
                     best_epoch, best_iter = e, iteration
-                    logger.info(f"Best validation score reached at epoch {best_epoch} step {best_iter}")
+                    print(f"Best validation score reached at epoch {best_epoch} step {best_iter}")
 
                 # calc test scores after every x step
                 tst_auc, _, class_scores, _ = evaluate(tokenizer, model, args.device, tst_dataloader, class_break_down=True)
 
-                logger.info(f"Overall auc & Test Set & CSKB Head + ASER tail & ASER edges")
-                logger.info(f"test scores at epoch {e} step {iteration}:" + " & ".join([str(round(tst_auc*100, 1))]+\
+                print(f"Overall auc & Test Set & CSKB Head + ASER tail & ASER edges")
+                print(f"test scores at epoch {e} step {iteration}:" + " & ".join([str(round(tst_auc*100, 1))]+\
                         [str(round(class_scores[clss]*100, 1)) for clss in ["test_set", "cs_head", "all_head"]]) )
 
                 model.train()

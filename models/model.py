@@ -57,7 +57,7 @@ class KGBERTClassifier(nn.Module):
         """
         
         embs = self.get_lm_embedding(tokens) # (batch_size, emb_size)
-        print(embs)
+        # print(embs)
         logits = self.linear(embs) # (batch_size, 2)
 
         return self.dropout(logits)

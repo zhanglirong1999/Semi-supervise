@@ -47,7 +47,7 @@ def evaluate(tokenizer, model, device, loader, class_break_down=False, model_typ
                     torch.sum(mask[:, 1:], dim=1)) # (batch_size, ) get the loss after removing PAD_TOKEN
 
                 values = -losses
-
+            print(values)
             predicted_scores = torch.cat((predicted_scores, values))
             labels = torch.cat((labels, y))
             classes.extend(data["clss"])
