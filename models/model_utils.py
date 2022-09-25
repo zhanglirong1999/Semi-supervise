@@ -1,3 +1,5 @@
+from cProfile import label
+from cgi import print_directory
 import random
 from itertools import chain
 
@@ -6,9 +8,10 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, accuracy_score, f1_score
 from torch.nn.utils.rnn import pad_sequence
 from tqdm import tqdm
+from pytorch_metrics import BinaryAccuracy
 
 cr_loss = torch.nn.functional.cross_entropy
 
@@ -20,20 +23,22 @@ def evaluate(tokenizer, model, device, loader, class_break_down=False, model_typ
     predicted_scores = torch.tensor([]).to(device)
     labels = torch.tensor([]).to(device)
     classes = []
-
     with torch.no_grad():
         for _, data in enumerate(loader, 0):
-            y = data['label'].to(device, dtype=torch.long)
+            # print(data)
+            y = data['label'].to(device, dtype=torch.float)
+            # print(y)
             ids = data['ids'].to(device, dtype=torch.long)
             mask = data['mask'].to(device, dtype=torch.long)
 
             tokens = {"input_ids":ids, "attention_mask":mask}
 
-            if model_type == "kgbert":
+            if model_type == "kgbert" or model_type=="roberta":
                 outputs_logits = model(tokens)
 
                 logits = torch.softmax(outputs_logits, dim=1)            
                 values = logits[:, 1]
+                # print(values)
             elif model_type == "gpt2":
                 outputs = model(input_ids = ids, attention_mask = mask, labels=ids)
 
@@ -47,30 +52,27 @@ def evaluate(tokenizer, model, device, loader, class_break_down=False, model_typ
                     torch.sum(mask[:, 1:], dim=1)) # (batch_size, ) get the loss after removing PAD_TOKEN
 
                 values = -losses
-            print(values)
             predicted_scores = torch.cat((predicted_scores, values))
             labels = torch.cat((labels, y))
             classes.extend(data["clss"])
+    y_true = labels
+    y_pred = predicted_scores
+    y_true[y_true>=0.7] = 1
+    y_true[y_true<0.7] = 0
+    y_pred[y_pred>=0.7] = 1
+    y_pred[y_pred<0.7] = 0
+    # print(len(labels))
+    # print(len(predicted_scores))
+    f1 = f1_score(y_true=y_true.cpu(), y_pred=y_pred.cpu())
+    print(f1)
+    return f1
+    metrics = BinaryAccuracy(device).to(device)
+    # preds = predicted_scores
+    # preds[preds >= 0.7] = 1 
+    metrics.update(y_pred, y_true)
+    return metrics.compute(), len(labels)
+    # return roc_auc_score( y_true.tolist(), (y_pred).tolist()), len(labels)
 
-    if class_break_down:
-        # calculate the break-down scores given different classes.
-        classes = pd.Series(classes)
-        predicted_scores = pd.Series((predicted_scores).tolist())
-        labels = pd.Series(labels.tolist())
-
-        clss_scores = {}
-        clss_num = {}
-        for clss in ["test_set", "cs_head", "all_head"]:
-            idx = classes == clss
-            clss_num[clss] = sum(idx)
-            try:
-                clss_scores[clss] = roc_auc_score(labels[idx], predicted_scores[idx])
-            except:
-                clss_scores[clss] = 0
-        return roc_auc_score( labels, predicted_scores ), len(labels), clss_scores, clss_num
-    else:
-        # return the overall AUC scores, with the number of examples
-        return roc_auc_score( labels.tolist(), (predicted_scores).tolist()), len(labels)
 
 def score_triples(tokenizer, model, device, loader, model_type="kgbert"):
     """

@@ -8,19 +8,20 @@ import torch.nn as nn
 import torch.nn.functional as F
 from sklearn.metrics import roc_auc_score
 from torch.nn.utils.rnn import pad_sequence
-from transformers import (AutoTokenizer, AutoModel, PretrainedConfig)
+from transformers import (AutoTokenizer, AutoModel, RobertaConfig, RobertaModel)
 
-class KGBERTClassifier(nn.Module):
+class RoBERTAClassifier(nn.Module):
     def __init__(self, model_name, dropout=0):
         super().__init__()
-
-        self.model = AutoModel.from_pretrained(model_name)
+        self.config = RobertaConfig.from_pretrained(model_name)
+        
+        # self.model = AutoModel.from_pretrained(model_name)
+        self.model = RobertaModel.from_pretrained(model_name)
         self.model_type = self.model.config.model_type
         
-        try:
-            self.emb_size = self.model.config.d_model # bart
-        except:
-            self.emb_size = self.model.config.hidden_size # roberta/bert
+        self.emb_size = self.model.config.hidden_size # bart
+
+        self.sigmoid = nn.Sigmoid()
 
         self.linear = nn.Linear(self.emb_size, 2)
 
@@ -57,7 +58,16 @@ class KGBERTClassifier(nn.Module):
         """
         
         embs = self.get_lm_embedding(tokens) # (batch_size, emb_size)
-        # print(embs)
+        # embs = embs.view(-1,self.emb_size)
+        # x = self.sigmoid(self.linear1(embs)) # (batch_size, 2)
+        # x = self.sigmoid(self.linear2(x))
+        # x = self.sigmoid(self.linear3(x))
+        # x = self.linear4(x)
+        # print(x.shape)
+        # return x
+        # return self.dropout(logits)
         logits = self.linear(embs) # (batch_size, 2)
-
+        # print(logits)
+        # logits = torch.softmax(logits, dim=1)         
+        # print(logits)
         return self.dropout(logits)

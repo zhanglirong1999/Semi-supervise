@@ -8,17 +8,15 @@ import numpy as np
 import pandas as pd
 import logging
 from tqdm import tqdm
+from torch.utils.data import random_split
 sys.path.append(os.getcwd())
 
 from torch.utils.data import Dataset, DataLoader, RandomSampler, SequentialSampler
 
-# from models.pseudo_labeling.model import KGBERTClassifier
-from model import KGBERTClassifier
+from model import RoBERTAClassifier
 from model_utils import evaluate
 from dataloader import CKBPDataset
-from transformers import AutoTokenizer
-
-# from utils.ckbp_utils import special_token_list
+from transformers import AutoTokenizer,RobertaTokenizer
 
 logging.basicConfig(level=logging.INFO)
 
@@ -29,18 +27,14 @@ def parse_args():
 
     # model related
     group_model = parser.add_argument_group("model configs")
-    group_model.add_argument("--ptlm", default='bert-base-uncased', type=str, 
+    group_model.add_argument("--ptlm", default='roberta-base', type=str, 
                         required=False, help="choose from huggingface PTLM")
     group_model.add_argument("--pretrain_from_path", required=False, default="",
                     help="pretrain this model from a checkpoint") # a bit different from --ptlm.
 
 
-    # pseudo-label-related args
+    #### TODO: pseudo-label-related args
     group_pseudo_label = parser.add_argument_group("pseudo label configs")
-    group_pseudo_label.add_argument("--pseudo_examples_path", required=False,
-                        help="paths to the csv file containing pseudo-labels")
-    group_pseudo_label.add_argument("--pseudo_proportion_in_batch", required=False, default=0.1, type=float,
-                        help="proportion of pseudo labeled data in a batch when mixing labeled and pseudo labeled data")
 
     # training-related args
     group_trainer = parser.add_argument_group("training configs")
@@ -63,16 +57,19 @@ def parse_args():
                         help="batch size")
     group_trainer.add_argument("--steps", default=-1, type=int, required=False,
                         help="the number of iterations to train model on labeled data. used for the case training model less than 1 epoch")
-    group_trainer.add_argument("--max_length", default=100, type=int, required=False,
+    group_trainer.add_argument("--max_length", default=30, type=int, required=False,
                         help="max_seq_length of h+r+t")
     group_trainer.add_argument("--eval_metric", type=str, required=False, default="overall_auc",
                     choices=["grouped_auc", "overall_auc", "accuracy"],
                     help="evaluation metric.")
-    group_trainer.add_argument("--eval_every", default=5, type=int, required=False,
+    group_trainer.add_argument("--eval_every", default=20, type=int, required=False,
                         help="eval on test set every x steps.")
     group_trainer.add_argument("--relation_as_special_token", action="store_true",
                         help="whether to use special token to represent relation.")
-    
+    group_trainer.add_argument("--noisy_training", action="store_true",
+                        help="whether to have a noisy training, flip the labels with probability p_noisy.")
+    group_trainer.add_argument("--p_noisy", default=0.0, type=float, required=False,
+                    help="probability to flip the labels")
 
     # IO-related
 
@@ -81,7 +78,7 @@ def parse_args():
                         type=str, required=False,
                         help="where to output.")
     group_data.add_argument("--train_csv_path", default='', type=str, required=True)
-    group_data.add_argument("--evaluation_file_path", default="/home/ubuntu/project/data/elec_true_all_v1.1.csv", 
+    group_data.add_argument("--evaluation_file_path", default="data/evaluation_set.csv", 
                             type=str, required=False)
     group_data.add_argument("--model_dir", default='models', type=str, required=False,
                         help="Where to save models.") # TODO
@@ -105,12 +102,17 @@ def main():
     # get all arguments
     args = parse_args()
 
-    save_dir = './result'
+    experiment_name = args.experiment_name
+    if args.noisy_training:
+        experiment_name = experiment_name + f"_noisy_{args.p_noisy}"
+
+    save_dir = os.path.join(args.output_dir, "_".join([os.path.basename(args.ptlm), 
+        f"bs{args.batch_size}", f"evalstep{args.eval_every}"])+experiment_name )
     os.makedirs(save_dir, exist_ok=True)
 
-    # logger = logging.getLogger("kg-bert")
-    # handler = logging.FileHandler(os.path.join(save_dir, f"log_seed_{args.seed}.txt"))
-    # logger.addHandler(handler)
+    logger = logging.getLogger("kg-bert")
+    handler = logging.FileHandler(os.path.join(save_dir, f"log_seed_{args.seed}.txt"))
+    logger.addHandler(handler)
 
     # set random seeds
     seed = args.seed
@@ -123,27 +125,38 @@ def main():
     torch.backends.cudnn.deterministic = True
 
     # load model
-    model = KGBERTClassifier(args.ptlm).to(args.device)
+    model = RoBERTAClassifier(args.ptlm).to(args.device)
 
-    tokenizer = AutoTokenizer.from_pretrained(args.ptlm)
+    tokenizer = RobertaTokenizer.from_pretrained(args.ptlm)
 
-    sep_token = tokenizer.sep_token
+    if "bart" in args.ptlm:
+        sep_token = " "
+    else:
+        sep_token = tokenizer.sep_token
 
-    # if args.relation_as_special_token:
-    #     tokenizer.add_special_tokens({
-    #         'additional_special_tokens': special_token_list,
-    #     })
-    #     model.model.resize_token_embeddings(len(tokenizer))
+    if args.relation_as_special_token:
+        tokenizer.add_special_tokens({
+            'additional_special_tokens': special_token_list,
+        })
+        model.model.resize_token_embeddings(len(tokenizer))
 
 
 
     # load data
 
     train_dataset = pd.read_csv(args.train_csv_path)
-    test_dataset = pd.read_csv(args.evaluation_file_path)
-    # print(train_dataset.columns)
+    # infer_file = pd.read_csv(args.evaluation_file_path)
+    training_set = CKBPDataset(train_dataset, tokenizer, args.max_length, sep_token=sep_token)
+
+    train_l = int(0.8 * len(train_dataset))
+    test_l = len(train_dataset) - train_l
+    train_dataset_,  test_dataset_= random_split(
+        dataset=training_set,
+        lengths=[train_l, test_l],
+        generator=torch.Generator().manual_seed(0)
+    )
     train_params = {
-        'batch_size': int(args.batch_size*(1-args.pseudo_proportion_in_batch)),
+        'batch_size': args.batch_size,
         'shuffle': True,
         'num_workers': 5
     }
@@ -153,33 +166,16 @@ def main():
         'shuffle': False,
         'num_workers': 5
     }
-
-    training_set = CKBPDataset(train_dataset, tokenizer, args.max_length, sep_token=sep_token)
-    training_loader = DataLoader(training_set, **train_params, drop_last=True)
-    batch_count = len(training_loader)
-
-    # dev_dataset = CKBPDataset(test_dataset, tokenizer, args.max_length, sep_token=sep_token) 
-    # tst_dataset = CKBPDataset(test_dataset, tokenizer, args.max_length, sep_token=sep_token) 
-    dev_dataset = CKBPDataset(train_dataset, tokenizer, args.max_length, sep_token=sep_token) 
-    tst_dataset = CKBPDataset(train_dataset, tokenizer, args.max_length, sep_token=sep_token) 
-
-    dev_dataloader = DataLoader(dev_dataset, **val_params, drop_last=False)
-    tst_dataloader = DataLoader(tst_dataset, **val_params, drop_last=False)
+    train = DataLoader(train_dataset_, **train_params, drop_last=True)
+    test = DataLoader(test_dataset_, **val_params, drop_last=True)
 
 
-    # pseudo label dataset
-    pseudo_params = {
-        'batch_size': args.batch_size - train_params["batch_size"],
-        'shuffle': True,
-        'num_workers': 5
-    }
+    # training_set = CKBPDataset(train_dataset_, tokenizer, args.max_length, sep_token=sep_token)
+    # training_loader = DataLoader(training_set, **train_params, drop_last=True)
 
-    # pseudo_dataset = pd.read_csv(args.pseudo_examples_path)
-    pseudo_dataset = pd.read_csv(args.train_csv_path)
-    pseudo_dataset = pseudo_dataset.sample(n=pseudo_params['batch_size']*batch_count, random_state=args.seed, replace=True).reset_index(drop=True)
+    # tst_dataset = CKBPDataset(test, tokenizer, args.max_length, sep_token=sep_token) 
 
-    pseudo_training_set = CKBPDataset(pseudo_dataset, tokenizer, args.max_length, sep_token=sep_token)
-    pseudo_loader = DataLoader(pseudo_training_set, **pseudo_params, drop_last=True)
+    # tst_dataloader = DataLoader(tst_dataset, **val_params, drop_last=False)
 
     # model training
     
@@ -194,55 +190,76 @@ def main():
     best_val_score = 0
 
     model.train()
-    
-    if args.steps > 0:
-        args.epochs = 1
+    batch_count = len(train)
+
+    iteration = 0
 
     for e in range(args.epochs):
 
-        for iteration, (ldata, pdata) in tqdm(enumerate(zip(training_loader, pseudo_loader), 1), total=batch_count):
+        for iteration, data in tqdm(enumerate(train, iteration+1),total=batch_count):
             # the iteration starts from 1. 
-            # print(pdata)
-            y = torch.cat((ldata['label'], pdata['label']), dim=0).to(args.device, dtype=torch.long)
-            ids = torch.cat((ldata['ids'], pdata['ids']), dim=0).to(args.device, dtype=torch.long)
-            mask = torch.cat((ldata['mask'], pdata['mask']), dim=0).to(args.device, dtype=torch.long)
+            print(iteration)
+            y = data['label'].to(args.device, dtype=torch.long)
+            # noisy training
+            if args.noisy_training:
+                noisy_vec = torch.rand(len(y))
+                y = y ^ (noisy_vec < args.p_noisy).to(args.device)
+                # flip label with probability p_noisy
+
+            ids = data['ids'].to(args.device, dtype=torch.long)
+            mask = data['mask'].to(args.device, dtype=torch.long)
 
             tokens = {"input_ids":ids, "attention_mask":mask}
+
             logits = model(tokens)
+            # print(y.min())
+            # print(y.max())
+            # print(y)
+            # print(logits)
+            y[y<0] = 0
+            y[y>1] = 1
+            logits[logits<0] = 0
+            logits[logits>1] = 1
+            # print(logits.min())
+            # print(logits.max())
+
             loss = criterion(logits, y)
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            print(iteration)
-            if args.eval_every > 0 and iteration % args.eval_every == 0:
-                print('kkkkkkk')
-                model.eval()
 
+            if args.eval_every > 0 and iteration % args.eval_every == 0:
+                model.eval()
                 # validation auc
-                eval_auc, _ = evaluate(tokenizer, model, args.device, dev_dataloader)
-                assert _ == len(dev_dataset)
+
+                eval_auc, _ = evaluate(tokenizer, model, args.device, test)
+                print('eval_auc: ')
+                # assert _ == len(dev_dataset)
+                eval_auc = eval_auc.item()
+                print(eval_auc)
 
                 if eval_auc > best_val_score:
                     best_val_score = eval_auc
                     if args.save_best_model:
                         torch.save(model.state_dict(), save_dir + f"/best_model_seed_{args.seed}.pth")
                         tokenizer.save_pretrained(save_dir + "/best_tokenizer")
-                    
+                    print('saved')
+                    print('best:')
+                    print(eval_auc)
                     best_epoch, best_iter = e, iteration
-                    print(f"Best validation score reached at epoch {best_epoch} step {best_iter}")
 
-                # calc test scores after every x step
-                tst_auc, _, class_scores, _ = evaluate(tokenizer, model, args.device, tst_dataloader, class_break_down=True)
+                    # calc test scores
 
-                print(f"Overall auc & Test Set & CSKB Head + ASER tail & ASER edges")
-                print(f"test scores at epoch {e} step {iteration}:" + " & ".join([str(round(tst_auc*100, 1))]+\
-                        [str(round(class_scores[clss]*100, 1)) for clss in ["test_set", "cs_head", "all_head"]]) )
+                    # tst_auc, _, class_scores, _ = evaluate(tokenizer, model, args.device, tst_dataloader, class_break_down=True)
+
+                    # logger.info(f"Overall auc & Test Set & CSKB Head + ASER tail & ASER edges. Reached at epoch {best_epoch} step {best_iter}")
+                    # logger.info("test scores:" + " & ".join([str(round(tst_auc*100, 1))]+\
+                    #         [str(round(class_scores[clss]*100, 1)) for clss in ["test_set", "cs_head", "all_head"]]) )
 
                 model.train()
-            
             if args.steps > 0 and iteration >= args.steps:
-                break
+                exit(0)
 
 if __name__ == "__main__":
     main()
