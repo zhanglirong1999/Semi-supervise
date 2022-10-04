@@ -1,4 +1,5 @@
 import os
+from statistics import mode
 import sys
 import torch
 import time
@@ -9,6 +10,7 @@ import pandas as pd
 import logging
 from tqdm import tqdm
 from torch.utils.data import random_split
+# from pytorch_lightning import LightningModule, Trainer
 sys.path.append(os.getcwd())
 
 from torch.utils.data import Dataset, DataLoader, RandomSampler, SequentialSampler
@@ -62,7 +64,7 @@ def parse_args():
     group_trainer.add_argument("--eval_metric", type=str, required=False, default="overall_auc",
                     choices=["grouped_auc", "overall_auc", "accuracy"],
                     help="evaluation metric.")
-    group_trainer.add_argument("--eval_every", default=20, type=int, required=False,
+    group_trainer.add_argument("--eval_every", default=100, type=int, required=False,
                         help="eval on test set every x steps.")
     group_trainer.add_argument("--relation_as_special_token", action="store_true",
                         help="whether to use special token to represent relation.")
@@ -141,7 +143,6 @@ def main():
         model.model.resize_token_embeddings(len(tokenizer))
 
 
-
     # load data
 
     train_dataset = pd.read_csv(args.train_csv_path)
@@ -163,12 +164,11 @@ def main():
 
     val_params = {
         'batch_size': args.test_batch_size,
-        'shuffle': False,
+        'shuffle': True,
         'num_workers': 5
     }
     train = DataLoader(train_dataset_, **train_params, drop_last=True)
     test = DataLoader(test_dataset_, **val_params, drop_last=True)
-
 
     # training_set = CKBPDataset(train_dataset_, tokenizer, args.max_length, sep_token=sep_token)
     # training_loader = DataLoader(training_set, **train_params, drop_last=True)
@@ -185,9 +185,11 @@ def main():
         raise NotImplementedError
 
     criterion = torch.nn.CrossEntropyLoss()
+    # criterion = torch.nn.BCEWithLogitsLoss()
 
     best_epoch, best_iter = 0, 0
     best_val_score = 0
+    best_f1 = 0
 
     model.train()
     batch_count = len(train)
@@ -198,8 +200,8 @@ def main():
 
         for iteration, data in tqdm(enumerate(train, iteration+1),total=batch_count):
             # the iteration starts from 1. 
-            print(iteration)
             y = data['label'].to(args.device, dtype=torch.long)
+            # print(y)
             # noisy training
             if args.noisy_training:
                 noisy_vec = torch.rand(len(y))
@@ -210,56 +212,38 @@ def main():
             mask = data['mask'].to(args.device, dtype=torch.long)
 
             tokens = {"input_ids":ids, "attention_mask":mask}
-
             logits = model(tokens)
-            # print(y.min())
-            # print(y.max())
-            # print(y)
             # print(logits)
-            y[y<0] = 0
-            y[y>1] = 1
-            logits[logits<0] = 0
-            logits[logits>1] = 1
-            # print(logits.min())
-            # print(logits.max())
-
+            # print(y)
             loss = criterion(logits, y)
-
+            # print('loss1 %f' % loss)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-
+            # print(model.compute_metric(logits, y ))
             if args.eval_every > 0 and iteration % args.eval_every == 0:
-                model.eval()
+                # model.eval()
                 # validation auc
-
-                eval_auc, _ = evaluate(tokenizer, model, args.device, test)
-                print('eval_auc: ')
+                f1, accuracy =  evaluate(tokenizer, model, args.device, test)
                 # assert _ == len(dev_dataset)
-                eval_auc = eval_auc.item()
-                print(eval_auc)
-
-                if eval_auc > best_val_score:
-                    best_val_score = eval_auc
+                print('f1 %f and acc %f' % (f1, accuracy))
+                if accuracy > best_val_score:
+                    best_val_score = accuracy
                     if args.save_best_model:
                         torch.save(model.state_dict(), save_dir + f"/best_model_seed_{args.seed}.pth")
                         tokenizer.save_pretrained(save_dir + "/best_tokenizer")
                     print('saved')
                     print('best:')
-                    print(eval_auc)
+                    print(accuracy)
                     best_epoch, best_iter = e, iteration
+            
+                if f1 > best_f1:
+                    best_f1 = f1
 
-                    # calc test scores
-
-                    # tst_auc, _, class_scores, _ = evaluate(tokenizer, model, args.device, tst_dataloader, class_break_down=True)
-
-                    # logger.info(f"Overall auc & Test Set & CSKB Head + ASER tail & ASER edges. Reached at epoch {best_epoch} step {best_iter}")
-                    # logger.info("test scores:" + " & ".join([str(round(tst_auc*100, 1))]+\
-                    #         [str(round(class_scores[clss]*100, 1)) for clss in ["test_set", "cs_head", "all_head"]]) )
-
-                model.train()
+                # model.train()
             if args.steps > 0 and iteration >= args.steps:
                 exit(0)
+    print('best f1 %f and acc %f' % (best_f1, best_val_score))
 
 if __name__ == "__main__":
     main()
