@@ -14,7 +14,7 @@
 But we want to set threshold 0.7(greater than 0.7 is 1, less than 0.7 is 0), the acc is poor. 
 
 ## 2. Contrasting learning 
-train_triple.py + model_triple.py + dataloader_tuple.py.  
+### train_triple.py + model_triple.py + dataloader_tuple.py + preprocess_data_triple.py.  
 
 (1) Reassemble the original data into new Tuples and save into csv. three tuples: anchor,positive,negative. 
 
