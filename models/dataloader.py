@@ -1,4 +1,5 @@
 # Importing stock libraries
+from cProfile import label
 import os
 import numpy as np
 import pandas as pd
@@ -28,7 +29,7 @@ class CKBPDataset(Dataset):
             self.quality = self.data['typicality_score']
         self.item_a = self.data["item_a_name"]
         self.item_b = self.data["item_b_name"]
-        self.assertion = self.data["assertion"]
+        self.assertion = self.data["assertion"]            
 
         self.sep_token = sep_token
         self.model = model
@@ -47,10 +48,11 @@ class CKBPDataset(Dataset):
         text = assertion
         text = text.replace('Item A',item_a)
         text = text.replace('Item B',item_b)        
-
+        # print(text)
         if self.model == "roberta":
-            source = self.tokenizer.batch_encode_plus([text], 
-                padding='max_length', max_length=self.max_length, return_tensors='pt', truncation=True)
+            source = self.tokenizer(text, padding='max_length', max_length=self.max_length, return_tensors='pt', truncation=True)
+            # source = self.tokenizer.batch_encode_plus([text], 
+                # padding='max_length', max_length=self.max_length, return_tensors='pt', truncation=True)
         elif self.model == "kgbert":
             source = self.tokenizer.batch_encode_plus([text], 
                 padding='max_length', max_length=self.max_length, return_tensors='pt', truncation=True)
@@ -69,11 +71,16 @@ class CKBPDataset(Dataset):
 
         source_ids = source['input_ids'].squeeze()
         source_mask = source['attention_mask'].squeeze()
+        # print(source_ids)
         # print(torch.tensor(self.quality[index]).to(dtype=torch.float))
+        lable = None
+        
+        if float(self.quality[index]) < 0.3:
+            label = 0
+        else:
+            label = 1
         return {
             'ids': source_ids.to(dtype=torch.long),
             'mask': source_mask.to(dtype=torch.long), 
-            'label': torch.tensor(self.quality[index]).to(dtype=torch.float),
-            # 'soft_label': torch.tensor(self.soft_label[index]).to(dtype=torch.float32),
-            'clss': self.clss[index],
+            'label': torch.tensor(label).to(dtype=torch.float),
         }
